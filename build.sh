@@ -39,44 +39,92 @@ if [ -z "$CHANNEL_SLUG" ]; then
     exit 1
 fi
 
-# Fetch ALL images from Are.na API (no pagination, request all at once)
-echo "Fetching images from Are.na channel: ${CHANNEL_SLUG}..."
-API_URL="http://api.are.na/v2/channels/${CHANNEL_SLUG}/contents?per=10000"
+# Fetch channel info to get total item count
+echo "Fetching channel info: ${CHANNEL_SLUG}..."
+CHANNEL_URL="http://api.are.na/v2/channels/${CHANNEL_SLUG}"
 
-# Build curl command with optional authorization header
 if [ -n "$AUTH_TOKEN" ]; then
-    API_RESPONSE=$(curl -sL -H "Authorization: Bearer ${AUTH_TOKEN}" "${API_URL}")
+    CHANNEL_RESPONSE=$(curl -sL -H "Authorization: Bearer ${AUTH_TOKEN}" "${CHANNEL_URL}")
 else
-    API_RESPONSE=$(curl -sL "${API_URL}")
+    CHANNEL_RESPONSE=$(curl -sL "${CHANNEL_URL}")
 fi
 
-# Check for API errors and extract image URLs
-IMAGE_URLS=$(echo "$API_RESPONSE" | python3 -c "
+# Get channel length and check for errors
+CHANNEL_INFO=$(echo "$CHANNEL_RESPONSE" | python3 -c "
 import json
 import sys
 
 data = json.load(sys.stdin)
 
-# Check for API errors (error responses have 'code' and 'message' but no 'contents')
-if 'code' in data and 'contents' not in data:
+# Check for API errors
+if 'code' in data and 'length' not in data:
     code = data.get('code', 0)
     message = data.get('message', 'Unknown error')
 
     if code == 401 or code == 403 or 'Unauthorized' in str(message):
         print('ERROR:UNAUTHORIZED')
-        sys.exit(0)
     elif code == 404 or 'not found' in str(message).lower():
         print('ERROR:NOT_FOUND')
-        sys.exit(0)
     else:
         print(f'ERROR:{message}')
-        sys.exit(0)
+    sys.exit(0)
 
-contents = data.get('contents', [])
-
-if not contents:
+length = data.get('length', 0)
+if length == 0:
     print('ERROR:NO_CONTENTS')
     sys.exit(0)
+
+print(f'LENGTH:{length}')
+")
+
+# Check for errors from channel info request
+if echo "$CHANNEL_INFO" | grep -q "^ERROR:"; then
+    ERROR_TYPE=$(echo "$CHANNEL_INFO" | sed 's/^ERROR://')
+
+    if [ "$ERROR_TYPE" = "UNAUTHORIZED" ]; then
+        if [ -z "$AUTH_TOKEN" ]; then
+            echo "Error: This channel is private. Please add an authorizationToken to ${CONFIG_FILE}"
+        else
+            echo "Error: Invalid authorization token. Please check your authorizationToken in ${CONFIG_FILE}"
+        fi
+    elif [ "$ERROR_TYPE" = "NOT_FOUND" ]; then
+        echo "Error: Channel '${CHANNEL_SLUG}' not found"
+    elif [ "$ERROR_TYPE" = "NO_CONTENTS" ]; then
+        echo "Error: Channel '${CHANNEL_SLUG}' has no contents"
+    else
+        echo "Error: Failed to fetch channel - ${ERROR_TYPE}"
+    fi
+    exit 1
+fi
+
+# Extract length
+CHANNEL_LENGTH=$(echo "$CHANNEL_INFO" | sed 's/^LENGTH://')
+echo "Channel has ${CHANNEL_LENGTH} items"
+
+# Calculate number of pages needed (100 items per page)
+PER_PAGE=100
+TOTAL_PAGES=$(( (CHANNEL_LENGTH + PER_PAGE - 1) / PER_PAGE ))
+echo "Fetching ${TOTAL_PAGES} page(s) of content..."
+
+# Fetch all pages and collect image URLs
+IMAGE_URLS=""
+for PAGE in $(seq 1 $TOTAL_PAGES); do
+    echo "  Fetching page ${PAGE}/${TOTAL_PAGES}..."
+    API_URL="http://api.are.na/v2/channels/${CHANNEL_SLUG}/contents?per=${PER_PAGE}&page=${PAGE}"
+
+    if [ -n "$AUTH_TOKEN" ]; then
+        API_RESPONSE=$(curl -sL -H "Authorization: Bearer ${AUTH_TOKEN}" "${API_URL}")
+    else
+        API_RESPONSE=$(curl -sL "${API_URL}")
+    fi
+
+    # Extract image URLs from this page
+    PAGE_URLS=$(echo "$API_RESPONSE" | python3 -c "
+import json
+import sys
+
+data = json.load(sys.stdin)
+contents = data.get('contents', [])
 
 for item in contents:
     image = item.get('image')
@@ -93,23 +141,19 @@ for item in contents:
                 print(url)
 ")
 
-# Check if the API request returned an error
-if echo "$IMAGE_URLS" | grep -q "^ERROR:"; then
-    ERROR_TYPE=$(echo "$IMAGE_URLS" | sed 's/^ERROR://')
-
-    if [ "$ERROR_TYPE" = "UNAUTHORIZED" ]; then
-        if [ -z "$AUTH_TOKEN" ]; then
-            echo "Error: This channel is private. Please add an authorizationToken to ${CONFIG_FILE}"
+    if [ -n "$PAGE_URLS" ]; then
+        if [ -n "$IMAGE_URLS" ]; then
+            IMAGE_URLS="${IMAGE_URLS}
+${PAGE_URLS}"
         else
-            echo "Error: Invalid authorization token. Please check your authorizationToken in ${CONFIG_FILE}"
+            IMAGE_URLS="${PAGE_URLS}"
         fi
-    elif [ "$ERROR_TYPE" = "NOT_FOUND" ]; then
-        echo "Error: Channel '${CHANNEL_SLUG}' not found"
-    elif [ "$ERROR_TYPE" = "NO_CONTENTS" ]; then
-        echo "Error: Channel '${CHANNEL_SLUG}' has no contents"
-    else
-        echo "Error: Failed to fetch channel - ${ERROR_TYPE}"
     fi
+done
+
+# Check if we got any images
+if [ -z "$IMAGE_URLS" ]; then
+    echo "Error: No images found in channel '${CHANNEL_SLUG}'"
     exit 1
 fi
 

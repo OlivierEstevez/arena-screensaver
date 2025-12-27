@@ -1,4 +1,4 @@
-# Arena Screensaver
+# Are.na Screensaver
 
 A MacOS screensaver that displays images from any [Are.na](https://www.are.na/) channel in an infinite grid.
 

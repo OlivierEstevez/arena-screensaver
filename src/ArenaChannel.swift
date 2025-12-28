@@ -104,12 +104,26 @@ class WhiteRectangleScreenSaverView: ScreenSaverView {
               let files = try? fileManager.contentsOfDirectory(atPath: imagesPath) else { return }
 
         let sortedFiles = files.sorted()
-        for file in sortedFiles {
-            let filePath = (imagesPath as NSString).appendingPathComponent(file)
-            if let cgImage = loadAndDecodeImage(at: filePath) {
+        let filePaths = sortedFiles.map { (imagesPath as NSString).appendingPathComponent($0) }
+
+        // Pre-allocate array with placeholders for parallel loading
+        var loadedImages: [(index: Int, cgImage: CGImage, size: CGSize)?] = Array(repeating: nil, count: filePaths.count)
+        let lock = NSLock()
+
+        // Load and decode images concurrently
+        DispatchQueue.concurrentPerform(iterations: filePaths.count) { index in
+            if let cgImage = Self.loadAndDecodeImage(at: filePaths[index]) {
                 let size = CGSize(width: cgImage.width, height: cgImage.height)
-                Self.cachedImages.append((cgImage: cgImage, size: size))
+                lock.lock()
+                loadedImages[index] = (index: index, cgImage: cgImage, size: size)
+                lock.unlock()
             }
+        }
+
+        // Collect results in order
+        Self.cachedImages = loadedImages.compactMap { item in
+            guard let item = item else { return nil }
+            return (cgImage: item.cgImage, size: item.size)
         }
 
         Self.imagesLoaded = true
@@ -120,16 +134,28 @@ class WhiteRectangleScreenSaverView: ScreenSaverView {
         return Self.cachedImages
     }
 
-    private func loadAndDecodeImage(at path: String) -> CGImage? {
+    // Static method for thread-safe parallel loading
+    private static func loadAndDecodeImage(at path: String) -> CGImage? {
         guard let dataProvider = CGDataProvider(filename: path),
-              let imageSource = CGImageSourceCreateWithDataProvider(dataProvider, nil),
-              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+              let imageSource = CGImageSourceCreateWithDataProvider(dataProvider, nil) else {
             return nil
         }
 
-        // Force decode by drawing to a new context
-        let width = cgImage.width
-        let height = cgImage.height
+        // Downsample large images - max 800px for grid cells
+        let maxCellSize = 800
+        let options: [CFString: Any] = [
+            kCGImageSourceThumbnailMaxPixelSize: maxCellSize,
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true
+        ]
+
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, options as CFDictionary) else {
+            return nil
+        }
+
+        // Force decode by drawing to a new context (prevents lazy decoding during animation)
+        let width = thumbnail.width
+        let height = thumbnail.height
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
 
@@ -142,11 +168,11 @@ class WhiteRectangleScreenSaverView: ScreenSaverView {
             space: colorSpace,
             bitmapInfo: bitmapInfo.rawValue
         ) else {
-            return cgImage
+            return thumbnail
         }
 
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-        return context.makeImage() ?? cgImage
+        context.draw(thumbnail, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage() ?? thumbnail
     }
 
     private func applyImageOrder() {

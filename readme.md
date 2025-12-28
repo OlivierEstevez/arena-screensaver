@@ -55,13 +55,11 @@ After building:
 - **Copy** to `/Library/Screen Savers/` for all users
 
 ## Settings
-Number of columns and scrolling speed can be adjusted via the screensaver `Options...` button on the Preferences app.
+Image order, number of columns, and scrolling speed can be adjusted via the screensaver `Options...` button on the Preferences app.
 
-## Know issues
-- Screensaver options do not update. This is due to a MacOS issue where the previous screensaver process isn't finished but reused. To get around it, open Activity Monitor and force quit any process related to `legacyScreensaver`.
-
-- Load time is a bit slow. This is due to pre-decoding images at startup (`loadAndDecodeImage`)
-- Scrolling can be a bit stuttery
+> [!WARNING]
+> There's a bug on Mac OS where the screensavers processes don't stop but keep running forever. This means the screensaver options do not update when changing them.
+The solution is to open Activity Monitor and force quit any process related to `legacyScreenSaver`.
 
 ## License
 

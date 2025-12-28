@@ -5,11 +5,14 @@ class WhiteRectangleScreenSaverView: ScreenSaverView {
     private var scrollOffset: CGFloat = 0
     private var scrollSpeed: CGFloat = 0.5
     private var columns: Int = 4
+    private var imageOrder: Int = 0  // 0 = Descending, 1 = Ascending, 2 = Random
     private var images: [(cgImage: CGImage, size: CGSize)] = []
+    private var displayIndices: [Int] = []
 
     // Configuration keys
     private static let speedKey = "ArenaChannelScrollSpeed"
     private static let columnsKey = "ArenaChannelColumns"
+    private static let orderKey = "ArenaChannelImageOrder"
 
     // Speed configuration
     private static let minSpeed: CGFloat = 0.1
@@ -21,9 +24,13 @@ class WhiteRectangleScreenSaverView: ScreenSaverView {
     private static let maxColumns: Int = 8
     private static let defaultColumns: Int = 4
 
+    // Order options
+    private static let orderOptions = ["Descending", "Ascending", "Random"]
+
     private var configSheet: NSWindow?
     private var speedSlider: NSSlider?
     private var columnsSlider: NSSlider?
+    private var orderPopup: NSPopUpButton?
 
     override init?(frame: NSRect, isPreview: Bool) {
         super.init(frame: frame, isPreview: isPreview)
@@ -54,6 +61,12 @@ class WhiteRectangleScreenSaverView: ScreenSaverView {
         } else {
             columns = Self.defaultColumns
         }
+
+        if let order = defaults?.object(forKey: Self.orderKey) as? Int {
+            imageOrder = order
+        } else {
+            imageOrder = 0
+        }
     }
 
     private func saveSpeed(_ speed: CGFloat) {
@@ -63,6 +76,11 @@ class WhiteRectangleScreenSaverView: ScreenSaverView {
 
     private func saveColumns(_ cols: Int) {
         defaults?.set(cols, forKey: Self.columnsKey)
+        defaults?.synchronize()
+    }
+
+    private func saveOrder(_ order: Int) {
+        defaults?.set(order, forKey: Self.orderKey)
         defaults?.synchronize()
     }
 
@@ -83,6 +101,23 @@ class WhiteRectangleScreenSaverView: ScreenSaverView {
                 let size = CGSize(width: cgImage.width, height: cgImage.height)
                 images.append((cgImage: cgImage, size: size))
             }
+        }
+
+        applyImageOrder()
+    }
+
+    private func applyImageOrder() {
+        guard !images.isEmpty else { return }
+
+        displayIndices = Array(0..<images.count)
+
+        switch imageOrder {
+        case 1: // Ascending (reverse order - last image first)
+            displayIndices.reverse()
+        case 2: // Random
+            displayIndices.shuffle()
+        default: // Descending (default - first image first)
+            break
         }
     }
 
@@ -130,7 +165,7 @@ class WhiteRectangleScreenSaverView: ScreenSaverView {
         context.setFillColor(NSColor.black.cgColor)
         context.fill(bounds)
 
-        guard !images.isEmpty else { return }
+        guard !images.isEmpty, !displayIndices.isEmpty else { return }
 
         let cellSize = bounds.width / CGFloat(columns)
         let rowsNeeded = Int(ceil(bounds.height / cellSize)) + 2
@@ -144,9 +179,10 @@ class WhiteRectangleScreenSaverView: ScreenSaverView {
                 // Draw from bottom, scrolling up
                 let y = CGFloat(row) * cellSize - pixelOffset
 
-                // Calculate which image to show (cycling through all images)
+                // Calculate which image to show (cycling through display indices)
                 let absoluteRow = Int(floor(scrollOffset / cellSize)) + row
-                let imageIndex = (absoluteRow * columns + col) % images.count
+                let displayIndex = (absoluteRow * columns + col) % displayIndices.count
+                let imageIndex = displayIndices[displayIndex]
 
                 let cellRect = CGRect(x: x, y: y, width: cellSize, height: cellSize)
                 drawCell(in: context, at: cellRect, imageData: images[imageIndex])
@@ -226,7 +262,7 @@ class WhiteRectangleScreenSaverView: ScreenSaverView {
 
     private func createConfigSheet() -> NSWindow {
         let windowWidth: CGFloat = 340
-        let windowHeight: CGFloat = 180
+        let windowHeight: CGFloat = 220
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: windowWidth, height: windowHeight),
@@ -239,13 +275,30 @@ class WhiteRectangleScreenSaverView: ScreenSaverView {
         let contentView = NSView(frame: NSRect(x: 0, y: 0, width: windowWidth, height: windowHeight))
 
         let labelWidth: CGFloat = 70
-        let sliderLeft: CGFloat = 95
+        let controlLeft: CGFloat = 95
         let sliderWidth: CGFloat = 190
         let smallFont = NSFont.systemFont(ofSize: 10)
         let labelFont = NSFont.systemFont(ofSize: 13)
 
+        // Order row (dropdown)
+        let orderRowY: CGFloat = 170
+
+        let orderLabel = NSTextField(labelWithString: "Order:")
+        orderLabel.frame = NSRect(x: 20, y: orderRowY, width: labelWidth, height: 20)
+        orderLabel.font = labelFont
+        orderLabel.alignment = .right
+        contentView.addSubview(orderLabel)
+
+        let orderPopup = NSPopUpButton(frame: NSRect(x: controlLeft, y: orderRowY - 2, width: 140, height: 26))
+        orderPopup.addItems(withTitles: Self.orderOptions)
+        orderPopup.selectItem(at: imageOrder)
+        orderPopup.target = self
+        orderPopup.action = #selector(orderChanged(_:))
+        contentView.addSubview(orderPopup)
+        self.orderPopup = orderPopup
+
         // Speed row
-        let speedRowY: CGFloat = 115
+        let speedRowY: CGFloat = 120
 
         let speedLabel = NSTextField(labelWithString: "Speed:")
         speedLabel.frame = NSRect(x: 20, y: speedRowY, width: labelWidth, height: 20)
@@ -253,7 +306,7 @@ class WhiteRectangleScreenSaverView: ScreenSaverView {
         speedLabel.alignment = .right
         contentView.addSubview(speedLabel)
 
-        let speedSlider = NSSlider(frame: NSRect(x: sliderLeft, y: speedRowY, width: sliderWidth, height: 20))
+        let speedSlider = NSSlider(frame: NSRect(x: controlLeft, y: speedRowY, width: sliderWidth, height: 20))
         speedSlider.minValue = Double(Self.minSpeed)
         speedSlider.maxValue = Double(Self.maxSpeed)
         speedSlider.doubleValue = Double(scrollSpeed)
@@ -264,13 +317,13 @@ class WhiteRectangleScreenSaverView: ScreenSaverView {
         self.speedSlider = speedSlider
 
         let slowerLabel = NSTextField(labelWithString: "Slower")
-        slowerLabel.frame = NSRect(x: sliderLeft, y: speedRowY - 18, width: 50, height: 16)
+        slowerLabel.frame = NSRect(x: controlLeft, y: speedRowY - 18, width: 50, height: 16)
         slowerLabel.font = smallFont
         slowerLabel.textColor = .secondaryLabelColor
         contentView.addSubview(slowerLabel)
 
         let fasterLabel = NSTextField(labelWithString: "Faster")
-        fasterLabel.frame = NSRect(x: sliderLeft + sliderWidth - 50, y: speedRowY - 18, width: 50, height: 16)
+        fasterLabel.frame = NSRect(x: controlLeft + sliderWidth - 50, y: speedRowY - 18, width: 50, height: 16)
         fasterLabel.font = smallFont
         fasterLabel.alignment = .right
         fasterLabel.textColor = .secondaryLabelColor
@@ -285,7 +338,7 @@ class WhiteRectangleScreenSaverView: ScreenSaverView {
         columnsLabel.alignment = .right
         contentView.addSubview(columnsLabel)
 
-        let colSlider = NSSlider(frame: NSRect(x: sliderLeft, y: columnsRowY, width: sliderWidth, height: 20))
+        let colSlider = NSSlider(frame: NSRect(x: controlLeft, y: columnsRowY, width: sliderWidth, height: 20))
         colSlider.minValue = Double(Self.minColumns)
         colSlider.maxValue = Double(Self.maxColumns)
         colSlider.integerValue = columns
@@ -303,7 +356,7 @@ class WhiteRectangleScreenSaverView: ScreenSaverView {
         for i in 0..<tickCount {
             let num = Self.minColumns + i
             let numLabel = NSTextField(labelWithString: "\(num)")
-            let xPos = sliderLeft + (tickSpacing * CGFloat(i)) - 10
+            let xPos = controlLeft + (tickSpacing * CGFloat(i)) - 10
             numLabel.frame = NSRect(x: xPos, y: columnsRowY - 18, width: 20, height: 16)
             numLabel.font = smallFont
             numLabel.alignment = .center
@@ -322,6 +375,12 @@ class WhiteRectangleScreenSaverView: ScreenSaverView {
 
         window.contentView = contentView
         return window
+    }
+
+    @objc private func orderChanged(_ sender: NSPopUpButton) {
+        imageOrder = sender.indexOfSelectedItem
+        saveOrder(imageOrder)
+        applyImageOrder()
     }
 
     @objc private func speedSliderChanged(_ sender: NSSlider) {

@@ -2,11 +2,15 @@ import ScreenSaver
 
 class WhiteRectangleScreenSaverView: ScreenSaverView {
 
+    // Static cache to persist across view instances (macOS screensaver bug workaround)
+    private static var cachedImages: [(cgImage: CGImage, size: CGSize)] = []
+    private static var imagesLoaded = false
+    private static weak var activeInstance: WhiteRectangleScreenSaverView?
+
     private var scrollOffset: CGFloat = 0
     private var scrollSpeed: CGFloat = 0.5
     private var columns: Int = 4
     private var imageOrder: Int = 0  // 0 = Descending, 1 = Ascending, 2 = Random
-    private var images: [(cgImage: CGImage, size: CGSize)] = []
     private var displayIndices: [Int] = []
 
     // Configuration keys
@@ -85,6 +89,11 @@ class WhiteRectangleScreenSaverView: ScreenSaverView {
     }
 
     private func loadImages() {
+        guard !Self.imagesLoaded else {
+            applyImageOrder()
+            return
+        }
+
         let bundle = Bundle(for: type(of: self))
         guard let resourcePath = bundle.resourcePath else { return }
 
@@ -99,26 +108,16 @@ class WhiteRectangleScreenSaverView: ScreenSaverView {
             let filePath = (imagesPath as NSString).appendingPathComponent(file)
             if let cgImage = loadAndDecodeImage(at: filePath) {
                 let size = CGSize(width: cgImage.width, height: cgImage.height)
-                images.append((cgImage: cgImage, size: size))
+                Self.cachedImages.append((cgImage: cgImage, size: size))
             }
         }
 
+        Self.imagesLoaded = true
         applyImageOrder()
     }
 
-    private func applyImageOrder() {
-        guard !images.isEmpty else { return }
-
-        displayIndices = Array(0..<images.count)
-
-        switch imageOrder {
-        case 1: // Ascending (reverse order - last image first)
-            displayIndices.reverse()
-        case 2: // Random
-            displayIndices.shuffle()
-        default: // Descending (default - first image first)
-            break
-        }
+    private var images: [(cgImage: CGImage, size: CGSize)] {
+        return Self.cachedImages
     }
 
     private func loadAndDecodeImage(at path: String) -> CGImage? {
@@ -150,12 +149,37 @@ class WhiteRectangleScreenSaverView: ScreenSaverView {
         return context.makeImage() ?? cgImage
     }
 
+    private func applyImageOrder() {
+        guard !images.isEmpty else { return }
+
+        displayIndices = Array(0..<images.count)
+
+        switch imageOrder {
+        case 1: // Ascending (reverse order - last image first)
+            displayIndices.reverse()
+        case 2: // Random
+            displayIndices.shuffle()
+        default: // Descending (default - first image first)
+            break
+        }
+    }
+
     override func startAnimation() {
         super.startAnimation()
+        // Deactivate any previous instance and make this the active one
+        Self.activeInstance?.stopAnimation()
+        Self.activeInstance = self
     }
 
     override func stopAnimation() {
         super.stopAnimation()
+        if Self.activeInstance === self {
+            Self.activeInstance = nil
+        }
+    }
+
+    private var isActiveInstance: Bool {
+        return Self.activeInstance === self
     }
 
     override func draw(_ rect: NSRect) {
@@ -228,6 +252,9 @@ class WhiteRectangleScreenSaverView: ScreenSaverView {
     }
 
     override func animateOneFrame() {
+        // Only animate if this is the active instance
+        guard isActiveInstance else { return }
+
         scrollOffset += scrollSpeed
 
         // Reset offset periodically to prevent floating point issues

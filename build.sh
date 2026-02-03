@@ -54,7 +54,16 @@ CHANNEL_INFO=$(echo "$CHANNEL_RESPONSE" | python3 -c "
 import json
 import sys
 
-data = json.load(sys.stdin)
+response_text = sys.stdin.read()
+if not response_text.strip():
+    print('ERROR:EMPTY_RESPONSE')
+    sys.exit(0)
+
+try:
+    data = json.loads(response_text)
+except json.JSONDecodeError:
+    print('ERROR:INVALID_JSON')
+    sys.exit(0)
 
 # Check for API errors
 if 'code' in data and 'length' not in data:
@@ -91,6 +100,10 @@ if echo "$CHANNEL_INFO" | grep -q "^ERROR:"; then
         echo "Error: Channel '${CHANNEL_SLUG}' not found"
     elif [ "$ERROR_TYPE" = "NO_CONTENTS" ]; then
         echo "Error: Channel '${CHANNEL_SLUG}' has no contents"
+    elif [ "$ERROR_TYPE" = "EMPTY_RESPONSE" ]; then
+        echo "Error: API returned empty response. The server may be temporarily unavailable."
+    elif [ "$ERROR_TYPE" = "INVALID_JSON" ]; then
+        echo "Error: API returned invalid response. The server may be temporarily unavailable or rate limiting."
     else
         echo "Error: Failed to fetch channel - ${ERROR_TYPE}"
     fi
@@ -123,7 +136,16 @@ for PAGE in $(seq 1 $TOTAL_PAGES); do
 import json
 import sys
 
-data = json.load(sys.stdin)
+response_text = sys.stdin.read()
+if not response_text.strip():
+    sys.exit(0)
+
+try:
+    data = json.loads(response_text)
+except json.JSONDecodeError:
+    print('Error: Invalid JSON response from API', file=sys.stderr)
+    sys.exit(0)
+
 contents = data.get('contents', [])
 
 for item in contents:

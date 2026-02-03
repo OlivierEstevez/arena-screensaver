@@ -114,8 +114,8 @@ fi
 CHANNEL_LENGTH=$(echo "$CHANNEL_INFO" | sed 's/^LENGTH://')
 echo "Channel has ${CHANNEL_LENGTH} items"
 
-# Calculate number of pages needed (100 items per page)
-PER_PAGE=100
+# Calculate number of pages needed (50 items per page to avoid API timeouts)
+PER_PAGE=50
 TOTAL_PAGES=$(( (CHANNEL_LENGTH + PER_PAGE - 1) / PER_PAGE ))
 echo "Fetching ${TOTAL_PAGES} page(s) of content..."
 

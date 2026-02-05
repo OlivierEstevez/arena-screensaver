@@ -63,4 +63,4 @@ The solution is to open Activity Monitor and force quit any process related to `
 
 ## License
 
-Olivier Estévez © 2025. All rights reserved.
+Olivier Estévez © 2026. All rights reserved.
